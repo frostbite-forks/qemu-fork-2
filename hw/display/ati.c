@@ -542,6 +542,11 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
         qemu_log_mask(LOG_GUEST_ERROR,
                       "Read from write-only register 0x%x\n", (unsigned)addr);
         break;
+    case 0x500 ... 0x515:
+        /* Bochs/QEMU VBE MMIO — required by OpenBIOS vga.fs vga-driver-fcode */
+        vbe_ioport_write_index(&s->vga, 0, (addr - 0x500) >> 1);
+        val = vbe_ioport_read_data(&s->vga, 0);
+        break;
     default:
         break;
     }
@@ -1037,6 +1042,11 @@ static void ati_mm_write(void *opaque, hwaddr addr,
         } else if (s->host_data.next >= 4) {
             ati_host_data_flush(s);
         }
+        break;
+    case 0x500 ... 0x515:
+        /* Bochs/QEMU VBE MMIO — required by OpenBIOS vga.fs vga-driver-fcode */
+        vbe_ioport_write_index(&s->vga, 0, (addr - 0x500) >> 1);
+        vbe_ioport_write_data(&s->vga, 0, data);
         break;
     default:
         break;
