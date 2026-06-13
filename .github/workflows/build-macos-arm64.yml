@@ -50,6 +50,7 @@ jobs:
           </dict>
           </plist>
           EOF
+          xattr -cr dist/bin/qemu-system-ppc
           codesign -s - --entitlements qemu-entitlements.plist --force dist/bin/qemu-system-ppc
 
       - name: Package artifact
