@@ -1149,7 +1149,8 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     }
     memory_region_init(&s->linear_aper, OBJECT(dev), "ati-linear-aperture0",
                        s->linear_aper_sz);
-    memory_region_add_subregion(&s->linear_aper, 0, &vga->vram);
+    /* vga->vram is registered directly as BAR 0 (not via linear_aper) so
+     * do not add it as a subregion — a region cannot have two containers. */
 
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_MEM_PREFETCH, &vga->vram);
     pci_register_bar(dev, 1, PCI_BASE_ADDRESS_SPACE_IO, &s->io);
