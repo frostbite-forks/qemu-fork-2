@@ -1127,9 +1127,10 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     memory_region_init_alias(&s->io, OBJECT(s), "ati.io", &s->mm, 0, 0x100);
 
     /*
-     * The framebuffer is at the beginning of the linear aperture. For
-     * Rage128 the upper half of the aperture is reserved for an AGP
-     * window (which we do not emulate.)
+     * BAR 0: expose the VRAM directly so OpenFirmware/OpenBIOS PCI allocators
+     * can assign a suitably-sized (vgamem_mb) window. The hardware-correct
+     * 64 MiB aperture (601eb8f8ac) breaks the mac99 OpenBIOS PCI allocator.
+     * We still initialise linear_aper for internal MMIO correctness.
      */
     if (!s->linear_aper_sz) {
         if (s->dev_id == PCI_DEVICE_ID_ATI_RAGE128_PF) {
@@ -1150,7 +1151,7 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
                        s->linear_aper_sz);
     memory_region_add_subregion(&s->linear_aper, 0, &vga->vram);
 
-    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_MEM_PREFETCH, &s->linear_aper);
+    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_MEM_PREFETCH, &vga->vram);
     pci_register_bar(dev, 1, PCI_BASE_ADDRESS_SPACE_IO, &s->io);
     pci_register_bar(dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mm);
 
