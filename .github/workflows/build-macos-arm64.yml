@@ -34,12 +34,29 @@ jobs:
       - name: Install
         run: ninja -C build install
 
+      - name: Sign binary
+        run: |
+          cat > qemu-entitlements.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.cs.allow-jit</key>
+              <true/>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.cs.disable-library-validation</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          codesign -s - --entitlements qemu-entitlements.plist --force dist/bin/qemu-system-ppc
+
       - name: Package artifact
         run: |
           mkdir -p pkg/bin pkg/share/qemu/ndrv
           cp dist/bin/qemu-system-ppc pkg/bin/
           cp -r dist/share/qemu/. pkg/share/qemu/
-          # Bundle qemu_vga.ndrv into the fw-cfg expected path
           cp pc-bios/qemu_vga.ndrv pkg/share/qemu/ndrv/qemu_vga.ndrv
           tar czf qemu-ppc-macos-arm64.tar.gz -C pkg .
 
