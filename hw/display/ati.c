@@ -1084,11 +1084,39 @@ static void ati_mm_write(void *opaque, hwaddr addr,
             ati_host_data_flush(s);
         }
         break;
-    case 0x500 ... 0x515:
+    case 0x500 ... 0x515: {
         /* Bochs/QEMU VBE MMIO — required by OpenBIOS vga.fs vga-driver-fcode */
-        vbe_ioport_write_index(&s->vga, 0, (addr - 0x500) >> 1);
+        unsigned vbe_idx = (addr - 0x500) >> 1;
+        vbe_ioport_write_index(&s->vga, 0, vbe_idx);
         vbe_ioport_write_data(&s->vga, 0, data);
+        /*
+         * Sync ATI CRTC registers from VBE mode on enable.
+         * RAVE TtEngineDeviceCheck reads CRTC_H/V_TOTAL_DISP, CRTC_PITCH, and
+         * CRTC_GEN_CNTL to get display geometry; without these being valid it
+         * aborts before calling QARegisterEngine, so 3D is never detected.
+         * OpenBIOS vga.fs sets mode via VBE (XRES/YRES/BPP then ENABLE), leaving
+         * the ATI CRTC regs at zero — mirror them here on every ENABLE write.
+         */
+        if (vbe_idx == VBE_DISPI_INDEX_ENABLE && (data & VBE_DISPI_ENABLED)) {
+            uint16_t xres = s->vga.vbe_regs[VBE_DISPI_INDEX_XRES];
+            uint16_t yres = s->vga.vbe_regs[VBE_DISPI_INDEX_YRES];
+            uint16_t bpp  = s->vga.vbe_regs[VBE_DISPI_INDEX_BPP];
+            uint32_t pw;
+            switch (bpp) {
+            case 8:  pw = CRTC_PIX_WIDTH_8BPP;  break;
+            case 15: pw = CRTC_PIX_WIDTH_15BPP; break;
+            case 16: pw = CRTC_PIX_WIDTH_16BPP; break;
+            case 24: pw = CRTC_PIX_WIDTH_24BPP; break;
+            default: pw = CRTC_PIX_WIDTH_32BPP; break;
+            }
+            s->regs.crtc_gen_cntl = (s->regs.crtc_gen_cntl & ~CRTC_PIX_WIDTH_MASK)
+                                     | pw | CRTC2_EXT_DISP_EN | CRTC2_EN;
+            s->regs.crtc_h_total_disp = (uint32_t)((xres / 8 - 1) << 16);
+            s->regs.crtc_v_total_disp = (uint32_t)((yres - 1) << 16);
+            s->regs.crtc_pitch        = (xres * bpp / 8) / 8;
+        }
         break;
+    }
     /* PM4/CCE engine — Phase 1 fake 3D */
     case PM4_BUFFER_CNTL:
         s->regs.pm4_buffer_cntl = data;
