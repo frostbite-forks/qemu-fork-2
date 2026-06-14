@@ -1310,6 +1310,15 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     pci_register_bar(dev, 1, PCI_BASE_ADDRESS_SPACE_IO, &s->io);
     pci_register_bar(dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mm);
 
+    /*
+     * Subsystem IDs: use ATI vendor (0x1002) and a generic Rage 128 Pro
+     * board ID (0x0008).  The default QEMU value (0x1AF4 = VirtIO) causes
+     * the ATI Resource Manager to fail its main-monitor check because it
+     * sees a non-ATI subsystem vendor.
+     */
+    pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_ATI);
+    pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0x0008);
+
     /* most interrupts are not yet emulated but MacOS needs at least VBlank */
     dev->config[PCI_INTERRUPT_PIN] = 1;
     timer_init_ns(&s->vblank_timer, QEMU_CLOCK_VIRTUAL, ati_vga_vblank_irq, s);
