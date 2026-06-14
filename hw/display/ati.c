@@ -1352,6 +1352,16 @@ static const Property ati_vga_properties[] = {
     DEFINE_EDID_PROPERTIES(ATIVGAState, i2cddc.edid_info),
 };
 
+static uint32_t ati_pci_config_read(PCIDevice *dev, uint32_t addr, int len)
+{
+    uint32_t val = pci_default_read_config(dev, addr, len);
+    ATIVGAState *s = ATI_VGA(dev);
+    if (s->is_3d) {
+        warn_report("ati3d: PCI cfg read @0x%02x len=%d val=0x%x", addr, len, val);
+    }
+    return val;
+}
+
 static void ati_vga_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -1368,6 +1378,7 @@ static void ati_vga_class_init(ObjectClass *klass, const void *data)
     k->romfile = "vgabios-ati.bin";
     k->realize = ati_vga_realize;
     k->exit = ati_vga_exit;
+    k->config_read = ati_pci_config_read;
 }
 
 static void ati_vga_init(Object *o)
