@@ -1319,6 +1319,14 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_ATI);
     pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0x0008);
 
+    /*
+     * Real Rage 128 Pro PF silicon timing parameters.  The ATI Resource
+     * Manager reads PCI_MIN_GNT to sanity-check it is talking to a real
+     * ATI device (0x08 = 2 μs, the standard value on retail boards).
+     */
+    dev->config[PCI_MIN_GNT] = 0x08;
+    dev->config[PCI_MAX_LAT] = 0x00;
+
     /* most interrupts are not yet emulated but MacOS needs at least VBlank */
     dev->config[PCI_INTERRUPT_PIN] = 1;
     timer_init_ns(&s->vblank_timer, QEMU_CLOCK_VIRTUAL, ati_vga_vblank_irq, s);
@@ -1371,6 +1379,16 @@ static uint32_t ati_pci_config_read(PCIDevice *dev, uint32_t addr, int len)
     return val;
 }
 
+static void ati_pci_config_write(PCIDevice *dev, uint32_t addr,
+                                 uint32_t val, int len)
+{
+    pci_default_write_config(dev, addr, val, len);
+    ATIVGAState *s = ATI_VGA(dev);
+    if (s->is_3d) {
+        warn_report("ati3d: PCI cfg write @0x%02x len=%d val=0x%x", addr, len, val);
+    }
+}
+
 static void ati_vga_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -1384,10 +1402,12 @@ static void ati_vga_class_init(ObjectClass *klass, const void *data)
     k->class_id = PCI_CLASS_DISPLAY_VGA;
     k->vendor_id = PCI_VENDOR_ID_ATI;
     k->device_id = PCI_DEVICE_ID_ATI_RAGE128_PF;
+    k->revision = 0x02; /* Rage 128 Pro PF silicon stepping */
     k->romfile = "vgabios-ati.bin";
     k->realize = ati_vga_realize;
     k->exit = ati_vga_exit;
     k->config_read = ati_pci_config_read;
+    k->config_write = ati_pci_config_write;
 }
 
 static void ati_vga_init(Object *o)
