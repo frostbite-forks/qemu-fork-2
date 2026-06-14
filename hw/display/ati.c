@@ -597,12 +597,18 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
         val = s->regs.misc_3d_state_cntl;
         break;
     default:
-        /* Log unhandled reads in the 3D register range when 3D is active.
-         * Run QEMU with -d unimp to capture these during RAVE detection. */
-        if (s->is_3d && addr >= 0x0700) {
+        /*
+         * Log every unhandled MMIO read when 3D is active.  The RAVE
+         * extension may fail before reaching the PM4/3D range (>0x0700)
+         * if a lower-address configuration register returns an unexpected
+         * value.  Run QEMU with -d unimp to capture these, then pipe
+         * through "sort | uniq" to deduplicate the torrent of display-loop
+         * reads.
+         */
+        if (s->is_3d) {
             qemu_log_mask(LOG_UNIMP,
-                          "ati3d: unhandled 3D register read @0x%04x\n",
-                          (unsigned)addr);
+                          "ati-unimp: read @0x%04x size=%u\n",
+                          (unsigned)addr, size);
         }
         break;
     }
