@@ -384,7 +384,6 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
         }
         break;
     case RBBM_STATUS:
-    case GUI_STAT:
         val = 64; /* free CMDFIFO entries */
         break;
     case CRTC_H_TOTAL_DISP:
