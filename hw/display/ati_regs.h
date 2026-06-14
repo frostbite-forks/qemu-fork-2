@@ -242,7 +242,11 @@
 #define DST_TILE                                0x1700
 #define WAIT_UNTIL                              0x1720
 #define CACHE_CNTL                              0x1724
+#define CONFIG_STAT0                            0x1730 /* bit3=CFG_CLOCK_EN, bits5:4=CFG_MEM_TYPE */
+#define CONFIG_STAT0_CFG_CLOCK_EN               (1 << 3)
+#define CONFIG_STAT0_CFG_MEM_TYPE_SGRAM         (1 << 4)
 #define GUI_STAT                                0x1740
+#define GUI_STAT_ACTIVE                         (1 << 0)
 #define PC_GUI_MODE                             0x1744
 #define PC_GUI_CTLSTAT                          0x1748
 #define PC_DEBUG_MODE                           0x1760

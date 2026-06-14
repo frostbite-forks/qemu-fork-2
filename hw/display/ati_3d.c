@@ -36,6 +36,8 @@ void ati_3d_init(ATIVGAState *s)
     s->regs.pm4_buffer_dl_rptr      = 0;
     s->regs.pm4_buffer_dl_wptr      = 0;
     s->regs.pm4_micro_cntl          = 0;
+    s->regs.scale_3d_cntl           = 0;
+    s->regs.misc_3d_state_cntl      = 0;
 }
 
 void ati_3d_pm4_sync(ATIVGAState *s)

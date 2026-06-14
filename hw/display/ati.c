@@ -29,6 +29,7 @@
 #include "qapi/error.h"
 #include "ui/console.h"
 #include "trace.h"
+#include "ati_3d.h"
 
 #define ATI_DEBUG_HW_CURSOR 0
 
@@ -547,6 +548,47 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
         vbe_ioport_write_index(&s->vga, 0, (addr - 0x500) >> 1);
         val = vbe_ioport_read_data(&s->vga, 0);
         break;
+    /* PM4/CCE engine — Phase 1 fake 3D */
+    case PM4_BUFFER_CNTL:
+        val = s->regs.pm4_buffer_cntl;
+        break;
+    case PM4_BUFFER_WM_CNTL:
+        val = s->regs.pm4_buffer_wm_cntl;
+        break;
+    case PM4_BUFFER_DL_RPTR_ADDR:
+        val = s->regs.pm4_buffer_dl_rptr_addr;
+        break;
+    case PM4_BUFFER_DL_RPTR:
+        val = s->regs.pm4_buffer_dl_rptr;
+        break;
+    case PM4_BUFFER_DL_WPTR:
+        val = s->regs.pm4_buffer_dl_wptr;
+        break;
+    case PM4_MICRO_CNTL:
+        val = s->regs.pm4_micro_cntl;
+        break;
+    case PM4_STAT:
+        val = 0; /* engine always idle/ready in Phase 1 */
+        break;
+    /*
+     * Hardware detection registers read by ATI 3D Accelerator extension.
+     * FindATI3DHardware checks CONFIG_STAT0 CFG_CLOCK_EN (bit 3) to confirm
+     * the Rage 128 clock is running before calling QARegisterEngine.
+     * SCALE_3D_CNTL and MISC_3D_STATE_CNTL must round-trip their writes.
+     */
+    case CONFIG_STAT0:
+        /* CFG_CLOCK_EN (bit 3) = 1, CFG_MEM_TYPE (bits 5:4) = SGRAM */
+        val = CONFIG_STAT0_CFG_CLOCK_EN | CONFIG_STAT0_CFG_MEM_TYPE_SGRAM;
+        break;
+    case GUI_STAT:
+        val = 0; /* GUI_ACTIVE = 0 = engine idle */
+        break;
+    case SCALE_3D_CNTL:
+        val = s->regs.scale_3d_cntl;
+        break;
+    case MISC_3D_STATE_CNTL_REG:
+        val = s->regs.misc_3d_state_cntl;
+        break;
     default:
         break;
     }
@@ -1048,6 +1090,43 @@ static void ati_mm_write(void *opaque, hwaddr addr,
         vbe_ioport_write_index(&s->vga, 0, (addr - 0x500) >> 1);
         vbe_ioport_write_data(&s->vga, 0, data);
         break;
+    /* PM4/CCE engine — Phase 1 fake 3D */
+    case PM4_BUFFER_CNTL:
+        s->regs.pm4_buffer_cntl = data;
+        break;
+    case PM4_BUFFER_WM_CNTL:
+        s->regs.pm4_buffer_wm_cntl = data;
+        break;
+    case PM4_BUFFER_DL_RPTR_ADDR:
+        s->regs.pm4_buffer_dl_rptr_addr = data;
+        break;
+    case PM4_BUFFER_DL_RPTR:
+        s->regs.pm4_buffer_dl_rptr = data;
+        break;
+    case PM4_BUFFER_DL_WPTR:
+        s->regs.pm4_buffer_dl_wptr = data;
+        if (s->is_3d) {
+            ati_3d_pm4_sync(s);
+        }
+        break;
+    case PM4_MICRO_CNTL:
+        s->regs.pm4_micro_cntl = data;
+        break;
+    case SCALE_3D_CNTL:
+        s->regs.scale_3d_cntl = data;
+        break;
+    case MISC_3D_STATE_CNTL_REG:
+        s->regs.misc_3d_state_cntl = data;
+        break;
+    /* Accept microcode download and FIFO writes silently; Phase 2 processes them */
+    case PM4_MICROCODE_ADDR:
+    case PM4_MICROCODE_DATAH:
+    case PM4_MICROCODE_DATAL:
+    case PM4_FIFO_DATA_EVEN:
+    case PM4_FIFO_DATA_ODD:
+    case PM4_CMDFIFO_DATAH:
+    case PM4_CMDFIFO_DATAL:
+        break;
     default:
         break;
     }
@@ -1129,6 +1208,11 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
         s->i2cddc.edid_info.maxy = 1080;
     }
     qdev_realize(DEVICE(&s->i2cddc), BUS(i2cbus), &error_abort);
+
+    /* Phase 1: activate fake 3D capabilities when vgamem_mb == 32 */
+    if (s->vga.vram_size_mb == 32) {
+        ati_3d_init(s);
+    }
 
     /* mmio register space */
     memory_region_init_io(&s->mm, OBJECT(s), &ati_mm_ops, s,

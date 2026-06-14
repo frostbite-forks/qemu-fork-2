@@ -95,6 +95,16 @@ typedef struct ATIVGARegs {
     uint16_t default_sc_bottom;
     uint16_t default_sc_right;
     uint32_t default_tile;
+    /* 3D state registers — must round-trip for ATI 3D extension detection */
+    uint32_t scale_3d_cntl;
+    uint32_t misc_3d_state_cntl;
+    /* PM4/CCE engine — Phase 1 fake 3D */
+    uint32_t pm4_buffer_cntl;
+    uint32_t pm4_buffer_wm_cntl;
+    uint32_t pm4_buffer_dl_rptr_addr;
+    uint32_t pm4_buffer_dl_rptr;
+    uint32_t pm4_buffer_dl_wptr;
+    uint32_t pm4_micro_cntl;
 } ATIVGARegs;
 
 typedef struct ATIHostDataState {
@@ -125,6 +135,7 @@ struct ATIVGAState {
     MemoryRegion mm;
     ATIVGARegs regs;
     ATIHostDataState host_data;
+    bool is_3d; /* true when vgamem_mb == 32; gates Phase 1+ behaviour */
 };
 
 const char *ati_reg_name(int num);
