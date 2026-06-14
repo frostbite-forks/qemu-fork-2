@@ -38,6 +38,19 @@ void ati_3d_init(ATIVGAState *s)
     s->regs.pm4_micro_cntl          = 0;
     s->regs.scale_3d_cntl           = 0;
     s->regs.misc_3d_state_cntl      = 0;
+
+    /*
+     * Seed CRTC registers with a valid 1280×1024×32 geometry so that any
+     * hardware-detection code that reads them before OpenBIOS programs the
+     * VBE mode (which triggers the full sync in ati_mm_write) does not see
+     * all-zeros and abort.  The VBE-enable write will overwrite these with
+     * the actual display dimensions.
+     */
+    s->regs.crtc_gen_cntl      = CRTC2_EXT_DISP_EN | CRTC2_EN
+                                  | CRTC_PIX_WIDTH_32BPP;
+    s->regs.crtc_h_total_disp  = (uint32_t)((1280 / 8 - 1) << 16); /* 159 */
+    s->regs.crtc_v_total_disp  = (uint32_t)((1024 - 1) << 16);     /* 1023 */
+    s->regs.crtc_pitch         = (1280 * 4) / 8;                    /* 640 */
 }
 
 void ati_3d_pm4_sync(ATIVGAState *s)

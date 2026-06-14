@@ -580,7 +580,15 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
         val = CONFIG_STAT0_CFG_CLOCK_EN | CONFIG_STAT0_CFG_MEM_TYPE_SGRAM;
         break;
     case GUI_STAT:
-        val = 0; /* GUI_ACTIVE = 0 = engine idle */
+        /*
+         * Bits [11:0] = CMDFIFO free-entry count (r128_wait_for_fifo polls
+         * this with mask 0x0fff before each batch of CMDFIFO writes).
+         * Returning 0 means "FIFO full" and causes the RAVE extension to
+         * spin until timeout before ever calling QARegisterEngine.
+         * Return 64 (= RBBM_STATUS value) to indicate a ready FIFO.
+         * Bit 31 = GUI_ACTIVE; leave 0 (engine idle).
+         */
+        val = 64;
         break;
     case SCALE_3D_CNTL:
         val = s->regs.scale_3d_cntl;
@@ -589,6 +597,13 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
         val = s->regs.misc_3d_state_cntl;
         break;
     default:
+        /* Log unhandled reads in the 3D register range when 3D is active.
+         * Run QEMU with -d unimp to capture these during RAVE detection. */
+        if (s->is_3d && addr >= 0x0700) {
+            qemu_log_mask(LOG_UNIMP,
+                          "ati3d: unhandled 3D register read @0x%04x\n",
+                          (unsigned)addr);
+        }
         break;
     }
     if (addr < CUR_OFFSET || addr > CUR_CLR1 || ATI_DEBUG_HW_CURSOR) {
