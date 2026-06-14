@@ -354,9 +354,12 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
     case CNFG_CNTL:
         val = s->regs.config_cntl;
         break;
-    case CNFG_MEMSIZE:
+    case CNFG_MEMSIZE: {
         val = s->vga.vram_size;
+        static bool once;
+        if (!once) { once = true; warn_report("ati3d: CNFG_MEMSIZE read (ARM init probe)"); }
         break;
+    }
     case CONFIG_APER_0_BASE:
     case CONFIG_APER_1_BASE:
         val = pci_default_read_config(&s->dev,
@@ -372,12 +375,18 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
     case CONFIG_REG_APER_SIZE:
         val = memory_region_size(&s->mm) / 2;
         break;
-    case HOST_PATH_CNTL:
+    case HOST_PATH_CNTL: {
         val = BIT(23); /* Radeon HDP_APER_CNTL */
+        static bool once;
+        if (!once) { once = true; warn_report("ati3d: HOST_PATH_CNTL read"); }
         break;
-    case MC_STATUS:
+    }
+    case MC_STATUS: {
         val = 5;
+        static bool once;
+        if (!once) { once = true; warn_report("ati3d: MC_STATUS read"); }
         break;
+    }
     case MEM_SDRAM_MODE_REG:
         if (s->dev_id != PCI_DEVICE_ID_ATI_RAGE128_PF) {
             val = BIT(28) | BIT(20);
