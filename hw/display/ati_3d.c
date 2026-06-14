@@ -22,6 +22,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/bswap.h"
+#include "qemu/error-report.h"
 #include "hw/pci/pci_device.h"
 #include "ati_3d.h"
 #include "ati_regs.h"
@@ -29,6 +30,7 @@
 void ati_3d_init(ATIVGAState *s)
 {
     s->is_3d = true;
+    warn_report("ati3d: Phase 1 capabilities activated (vgamem_mb=32)");
 
     s->regs.pm4_buffer_cntl         = 0;
     s->regs.pm4_buffer_wm_cntl      = 0;

@@ -575,10 +575,13 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
      * the Rage 128 clock is running before calling QARegisterEngine.
      * SCALE_3D_CNTL and MISC_3D_STATE_CNTL must round-trip their writes.
      */
-    case CONFIG_STAT0:
+    case CONFIG_STAT0: {
         /* CFG_CLOCK_EN (bit 3) = 1, CFG_MEM_TYPE (bits 5:4) = SGRAM */
         val = CONFIG_STAT0_CFG_CLOCK_EN | CONFIG_STAT0_CFG_MEM_TYPE_SGRAM;
+        static bool once;
+        if (!once) { once = true; warn_report("ati3d: CONFIG_STAT0 read"); }
         break;
+    }
     case GUI_STAT:
         /*
          * Bits [11:0] = CMDFIFO free-entry count (r128_wait_for_fifo polls
