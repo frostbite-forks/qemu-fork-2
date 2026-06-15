@@ -284,11 +284,10 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
     uint32_t val = 0;
 
     if (s->is_3d) {
-        static bool mmio_first;
-        if (!mmio_first) {
-            mmio_first = true;
-            warn_report("ati3d: first MMIO read offset=0x%03x — NDRV/ARM reached hw",
-                        (unsigned)addr);
+        static unsigned mmio_log_count;
+        if (mmio_log_count < 30) {
+            warn_report("ati3d: MMIO read[%u] offset=0x%04x", mmio_log_count, (unsigned)addr);
+            mmio_log_count++;
         }
     }
 
