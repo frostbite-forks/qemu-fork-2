@@ -24,6 +24,7 @@
 #include "qemu/bswap.h"
 #include "qemu/error-report.h"
 #include "hw/pci/pci_device.h"
+#include "exec/cpu-common.h"
 #include "ati_3d.h"
 #include "ati_regs.h"
 
@@ -64,20 +65,19 @@ void ati_3d_pm4_sync(ATIVGAState *s)
      */
     s->regs.pm4_buffer_dl_rptr = s->regs.pm4_buffer_dl_wptr;
 
-    /*
-     * Write the updated RPTR to the VRAM location the driver polls.
-     * PM4_BUFFER_DL_RPTR_ADDR holds the GPU bus address; we convert it
-     * to a VRAM offset by subtracting BAR 0's assigned PCI base address.
-     */
-    if (s->regs.pm4_buffer_dl_rptr_addr) {
-        uint32_t bar0 = pci_get_long(s->dev.config + PCI_BASE_ADDRESS_0)
-                        & ~0xfU;
-        if (bar0) {
-            uint32_t offset = s->regs.pm4_buffer_dl_rptr_addr - bar0;
-            if (offset + 4 <= s->vga.vram_size) {
-                stl_le_p(s->vga.vram_ptr + offset,
-                         s->regs.pm4_buffer_dl_rptr);
-            }
-        }
+    if (!s->regs.pm4_buffer_dl_rptr_addr) {
+        return;
     }
+
+    /*
+     * Write the updated RPTR to the physical address the driver polls.
+     * PM4_BUFFER_DL_RPTR_ADDR is a PCI bus address.  On real hardware the
+     * GPU DMAs this value there; the driver may point it anywhere in the
+     * machine's physical memory (VRAM via BAR0, or a DMA buffer it
+     * allocated from system RAM).  Use cpu_physical_memory_write so we
+     * reach any physical address without needing to know the region type.
+     * Without this write the NDRV polls the location forever → hang.
+     */
+    uint32_t val = cpu_to_le32(s->regs.pm4_buffer_dl_rptr);
+    cpu_physical_memory_write(s->regs.pm4_buffer_dl_rptr_addr, &val, 4);
 }
