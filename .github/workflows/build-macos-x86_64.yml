@@ -1,4 +1,4 @@
-name: Build QEMU macOS arm64
+name: Build QEMU macOS x86_64
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout
@@ -26,6 +26,7 @@ jobs:
             --enable-cocoa \
             --disable-docs \
             --disable-werror \
+            --audio-drv-list=coreaudio \
             --prefix=$PWD/dist
 
       - name: Build
@@ -59,13 +60,13 @@ jobs:
           cp dist/bin/qemu-system-ppc pkg/bin/
           cp -r dist/share/qemu/. pkg/share/qemu/
           cp pc-bios/qemu_vga.ndrv pkg/share/qemu/ndrv/qemu_vga.ndrv
-          tar czf qemu-ppc-macos-arm64.tar.gz -C pkg .
+          tar czf qemu-ppc-macos-x86_64.tar.gz -C pkg .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qemu-ppc-macos-arm64
-          path: qemu-ppc-macos-arm64.tar.gz
+          name: qemu-ppc-macos-x86_64
+          path: qemu-ppc-macos-x86_64.tar.gz
           retention-days: 30
 
   release:
@@ -79,10 +80,10 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: qemu-ppc-macos-arm64
+          name: qemu-ppc-macos-x86_64
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: qemu-ppc-macos-arm64.tar.gz
+          files: qemu-ppc-macos-x86_64.tar.gz
           prerelease: false
