@@ -29,6 +29,7 @@
 #include "qapi/error.h"
 #include "ui/console.h"
 #include "trace.h"
+#include "ati_3d.h"
 
 #define ATI_DEBUG_HW_CURSOR 0
 
@@ -282,6 +283,14 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
     ATIVGAState *s = opaque;
     uint32_t val = 0;
 
+    if (s->is_3d && !(addr >= 0x0500 && addr <= 0x051f)) {
+        static unsigned mmio_log_count;
+        if (mmio_log_count < 200) {
+            warn_report("ati3d: MMIO read[%u] offset=0x%04x", mmio_log_count, (unsigned)addr);
+            mmio_log_count++;
+        }
+    }
+
     switch (addr) {
     case MM_INDEX:
         val = s->regs.mm_index;
@@ -353,9 +362,12 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
     case CNFG_CNTL:
         val = s->regs.config_cntl;
         break;
-    case CNFG_MEMSIZE:
+    case CNFG_MEMSIZE: {
         val = s->vga.vram_size;
+        static bool once;
+        if (!once) { once = true; warn_report("ati3d: CNFG_MEMSIZE read (ARM init probe)"); }
         break;
+    }
     case CONFIG_APER_0_BASE:
     case CONFIG_APER_1_BASE:
         val = pci_default_read_config(&s->dev,
@@ -371,19 +383,24 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
     case CONFIG_REG_APER_SIZE:
         val = memory_region_size(&s->mm) / 2;
         break;
-    case HOST_PATH_CNTL:
+    case HOST_PATH_CNTL: {
         val = BIT(23); /* Radeon HDP_APER_CNTL */
+        static bool once;
+        if (!once) { once = true; warn_report("ati3d: HOST_PATH_CNTL read"); }
         break;
-    case MC_STATUS:
+    }
+    case MC_STATUS: {
         val = 5;
+        static bool once;
+        if (!once) { once = true; warn_report("ati3d: MC_STATUS read"); }
         break;
+    }
     case MEM_SDRAM_MODE_REG:
         if (s->dev_id != PCI_DEVICE_ID_ATI_RAGE128_PF) {
             val = BIT(28) | BIT(20);
         }
         break;
     case RBBM_STATUS:
-    case GUI_STAT:
         val = 64; /* free CMDFIFO entries */
         break;
     case CRTC_H_TOTAL_DISP:
@@ -542,7 +559,77 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
         qemu_log_mask(LOG_GUEST_ERROR,
                       "Read from write-only register 0x%x\n", (unsigned)addr);
         break;
+    case 0x500 ... 0x515:
+        /* Bochs/QEMU VBE MMIO — required by OpenBIOS vga.fs vga-driver-fcode */
+        vbe_ioport_write_index(&s->vga, 0, (addr - 0x500) >> 1);
+        val = vbe_ioport_read_data(&s->vga, 0);
+        break;
+    /* PM4/CCE engine — Phase 1 fake 3D */
+    case PM4_BUFFER_CNTL:
+        val = s->regs.pm4_buffer_cntl;
+        break;
+    case PM4_BUFFER_WM_CNTL:
+        val = s->regs.pm4_buffer_wm_cntl;
+        break;
+    case PM4_BUFFER_DL_RPTR_ADDR:
+        val = s->regs.pm4_buffer_dl_rptr_addr;
+        break;
+    case PM4_BUFFER_DL_RPTR:
+        val = s->regs.pm4_buffer_dl_rptr;
+        break;
+    case PM4_BUFFER_DL_WPTR:
+        val = s->regs.pm4_buffer_dl_wptr;
+        break;
+    case PM4_MICRO_CNTL:
+        val = s->regs.pm4_micro_cntl;
+        break;
+    case PM4_STAT:
+        val = 0; /* engine always idle/ready in Phase 1 */
+        break;
+    /*
+     * Hardware detection registers read by ATI 3D Accelerator extension.
+     * FindATI3DHardware checks CONFIG_STAT0 CFG_CLOCK_EN (bit 3) to confirm
+     * the Rage 128 clock is running before calling QARegisterEngine.
+     * SCALE_3D_CNTL and MISC_3D_STATE_CNTL must round-trip their writes.
+     */
+    case CONFIG_STAT0: {
+        /* CFG_CLOCK_EN (bit 3) = 1, CFG_MEM_TYPE (bits 5:4) = SGRAM */
+        val = CONFIG_STAT0_CFG_CLOCK_EN | CONFIG_STAT0_CFG_MEM_TYPE_SGRAM;
+        static bool once;
+        if (!once) { once = true; warn_report("ati3d: CONFIG_STAT0 read"); }
+        break;
+    }
+    case GUI_STAT:
+        /*
+         * Bits [11:0] = CMDFIFO free-entry count (r128_wait_for_fifo polls
+         * this with mask 0x0fff before each batch of CMDFIFO writes).
+         * Returning 0 means "FIFO full" and causes the RAVE extension to
+         * spin until timeout before ever calling QARegisterEngine.
+         * Return 64 (= RBBM_STATUS value) to indicate a ready FIFO.
+         * Bit 31 = GUI_ACTIVE; leave 0 (engine idle).
+         */
+        val = 64;
+        break;
+    case SCALE_3D_CNTL:
+        val = s->regs.scale_3d_cntl;
+        break;
+    case MISC_3D_STATE_CNTL_REG:
+        val = s->regs.misc_3d_state_cntl;
+        break;
     default:
+        /*
+         * Log every unhandled MMIO read when 3D is active.  The RAVE
+         * extension may fail before reaching the PM4/3D range (>0x0700)
+         * if a lower-address configuration register returns an unexpected
+         * value.  Run QEMU with -d unimp to capture these, then pipe
+         * through "sort | uniq" to deduplicate the torrent of display-loop
+         * reads.
+         */
+        if (s->is_3d) {
+            qemu_log_mask(LOG_UNIMP,
+                          "ati-unimp: read @0x%04x size=%u\n",
+                          (unsigned)addr, size);
+        }
         break;
     }
     if (addr < CUR_OFFSET || addr > CUR_CLR1 || ATI_DEBUG_HW_CURSOR) {
@@ -566,6 +653,15 @@ static void ati_mm_write(void *opaque, hwaddr addr,
                            uint64_t data, unsigned int size)
 {
     ATIVGAState *s = opaque;
+
+    if (s->is_3d && !(addr >= 0x0500 && addr <= 0x051f)) {
+        static unsigned mmio_wlog_count;
+        if (mmio_wlog_count < 200) {
+            warn_report("ati3d: MMIO write[%u] offset=0x%04x val=0x%x",
+                        mmio_wlog_count, (unsigned)addr, (unsigned)data);
+            mmio_wlog_count++;
+        }
+    }
 
     if (addr < CUR_OFFSET || addr > CUR_CLR1 || ATI_DEBUG_HW_CURSOR) {
         trace_ati_mm_write(size, addr, ati_reg_name(addr & ~3ULL), data);
@@ -1038,6 +1134,76 @@ static void ati_mm_write(void *opaque, hwaddr addr,
             ati_host_data_flush(s);
         }
         break;
+    case 0x500 ... 0x515: {
+        /* Bochs/QEMU VBE MMIO — required by OpenBIOS vga.fs vga-driver-fcode */
+        unsigned vbe_idx = (addr - 0x500) >> 1;
+        vbe_ioport_write_index(&s->vga, 0, vbe_idx);
+        vbe_ioport_write_data(&s->vga, 0, data);
+        /*
+         * Sync ATI CRTC registers from VBE mode on enable.
+         * RAVE TtEngineDeviceCheck reads CRTC_H/V_TOTAL_DISP, CRTC_PITCH, and
+         * CRTC_GEN_CNTL to get display geometry; without these being valid it
+         * aborts before calling QARegisterEngine, so 3D is never detected.
+         * OpenBIOS vga.fs sets mode via VBE (XRES/YRES/BPP then ENABLE), leaving
+         * the ATI CRTC regs at zero — mirror them here on every ENABLE write.
+         */
+        if (vbe_idx == VBE_DISPI_INDEX_ENABLE && (data & VBE_DISPI_ENABLED)) {
+            uint16_t xres = s->vga.vbe_regs[VBE_DISPI_INDEX_XRES];
+            uint16_t yres = s->vga.vbe_regs[VBE_DISPI_INDEX_YRES];
+            uint16_t bpp  = s->vga.vbe_regs[VBE_DISPI_INDEX_BPP];
+            uint32_t pw;
+            switch (bpp) {
+            case 8:  pw = CRTC_PIX_WIDTH_8BPP;  break;
+            case 15: pw = CRTC_PIX_WIDTH_15BPP; break;
+            case 16: pw = CRTC_PIX_WIDTH_16BPP; break;
+            case 24: pw = CRTC_PIX_WIDTH_24BPP; break;
+            default: pw = CRTC_PIX_WIDTH_32BPP; break;
+            }
+            s->regs.crtc_gen_cntl = (s->regs.crtc_gen_cntl & ~CRTC_PIX_WIDTH_MASK)
+                                     | pw | CRTC2_EXT_DISP_EN | CRTC2_EN;
+            s->regs.crtc_h_total_disp = (uint32_t)((xres / 8 - 1) << 16);
+            s->regs.crtc_v_total_disp = (uint32_t)((yres - 1) << 16);
+            s->regs.crtc_pitch        = (xres * bpp / 8) / 8;
+        }
+        break;
+    }
+    /* PM4/CCE engine — Phase 1 fake 3D */
+    case PM4_BUFFER_CNTL:
+        s->regs.pm4_buffer_cntl = data;
+        break;
+    case PM4_BUFFER_WM_CNTL:
+        s->regs.pm4_buffer_wm_cntl = data;
+        break;
+    case PM4_BUFFER_DL_RPTR_ADDR:
+        s->regs.pm4_buffer_dl_rptr_addr = data;
+        break;
+    case PM4_BUFFER_DL_RPTR:
+        s->regs.pm4_buffer_dl_rptr = data;
+        break;
+    case PM4_BUFFER_DL_WPTR:
+        s->regs.pm4_buffer_dl_wptr = data;
+        if (s->is_3d) {
+            ati_3d_pm4_sync(s);
+        }
+        break;
+    case PM4_MICRO_CNTL:
+        s->regs.pm4_micro_cntl = data;
+        break;
+    case SCALE_3D_CNTL:
+        s->regs.scale_3d_cntl = data;
+        break;
+    case MISC_3D_STATE_CNTL_REG:
+        s->regs.misc_3d_state_cntl = data;
+        break;
+    /* Accept microcode download and FIFO writes silently; Phase 2 processes them */
+    case PM4_MICROCODE_ADDR:
+    case PM4_MICROCODE_DATAH:
+    case PM4_MICROCODE_DATAL:
+    case PM4_FIFO_DATA_EVEN:
+    case PM4_FIFO_DATA_ODD:
+    case PM4_CMDFIFO_DATAH:
+    case PM4_CMDFIFO_DATAL:
+        break;
     default:
         break;
     }
@@ -1104,7 +1270,26 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     i2cbus = i2c_init_bus(DEVICE(s), "ati-vga.ddc");
     bitbang_i2c_init(&s->bbi2c, i2cbus);
     i2c_slave_set_address(I2C_SLAVE(&s->i2cddc), 0x50);
+    /* Default EDID for Rage 128 Pro: prefer 1680x1050, advertise up to 1920x1080.
+     * Only applied when not overridden via xres=/yres=/xmax=/ymax= properties. */
+    if (!s->i2cddc.edid_info.prefx) {
+        s->i2cddc.edid_info.prefx = 1680;
+    }
+    if (!s->i2cddc.edid_info.prefy) {
+        s->i2cddc.edid_info.prefy = 1050;
+    }
+    if (!s->i2cddc.edid_info.maxx) {
+        s->i2cddc.edid_info.maxx = 1920;
+    }
+    if (!s->i2cddc.edid_info.maxy) {
+        s->i2cddc.edid_info.maxy = 1080;
+    }
     qdev_realize(DEVICE(&s->i2cddc), BUS(i2cbus), &error_abort);
+
+    /* Phase 1: activate fake 3D capabilities when vgamem_mb == 32 */
+    if (s->vga.vram_size_mb == 32) {
+        ati_3d_init(s);
+    }
 
     /* mmio register space */
     memory_region_init_io(&s->mm, OBJECT(s), &ati_mm_ops, s,
@@ -1113,9 +1298,10 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     memory_region_init_alias(&s->io, OBJECT(s), "ati.io", &s->mm, 0, 0x100);
 
     /*
-     * The framebuffer is at the beginning of the linear aperture. For
-     * Rage128 the upper half of the aperture is reserved for an AGP
-     * window (which we do not emulate.)
+     * BAR 0: expose the VRAM directly so OpenFirmware/OpenBIOS PCI allocators
+     * can assign a suitably-sized (vgamem_mb) window. The hardware-correct
+     * 64 MiB aperture (601eb8f8ac) breaks the mac99 OpenBIOS PCI allocator.
+     * We still initialise linear_aper for internal MMIO correctness.
      */
     if (!s->linear_aper_sz) {
         if (s->dev_id == PCI_DEVICE_ID_ATI_RAGE128_PF) {
@@ -1134,11 +1320,29 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     }
     memory_region_init(&s->linear_aper, OBJECT(dev), "ati-linear-aperture0",
                        s->linear_aper_sz);
-    memory_region_add_subregion(&s->linear_aper, 0, &vga->vram);
+    /* vga->vram is registered directly as BAR 0 (not via linear_aper) so
+     * do not add it as a subregion — a region cannot have two containers. */
 
-    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_MEM_PREFETCH, &s->linear_aper);
+    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_MEM_PREFETCH, &vga->vram);
     pci_register_bar(dev, 1, PCI_BASE_ADDRESS_SPACE_IO, &s->io);
     pci_register_bar(dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mm);
+
+    /*
+     * Subsystem IDs: use ATI vendor (0x1002) and a generic Rage 128 Pro
+     * board ID (0x0008).  The default QEMU value (0x1AF4 = VirtIO) causes
+     * the ATI Resource Manager to fail its main-monitor check because it
+     * sees a non-ATI subsystem vendor.
+     */
+    pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_ATI);
+    pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0x0008);
+
+    /*
+     * Real Rage 128 Pro PF silicon timing parameters.  The ATI Resource
+     * Manager reads PCI_MIN_GNT to sanity-check it is talking to a real
+     * ATI device (0x08 = 2 μs, the standard value on retail boards).
+     */
+    dev->config[PCI_MIN_GNT] = 0x08;
+    dev->config[PCI_MAX_LAT] = 0x00;
 
     /* most interrupts are not yet emulated but MacOS needs at least VBlank */
     dev->config[PCI_INTERRUPT_PIN] = 1;
@@ -1182,6 +1386,26 @@ static const Property ati_vga_properties[] = {
     DEFINE_EDID_PROPERTIES(ATIVGAState, i2cddc.edid_info),
 };
 
+static uint32_t ati_pci_config_read(PCIDevice *dev, uint32_t addr, int len)
+{
+    uint32_t val = pci_default_read_config(dev, addr, len);
+    ATIVGAState *s = ATI_VGA(dev);
+    if (s->is_3d) {
+        warn_report("ati3d: PCI cfg read @0x%02x len=%d val=0x%x", addr, len, val);
+    }
+    return val;
+}
+
+static void ati_pci_config_write(PCIDevice *dev, uint32_t addr,
+                                 uint32_t val, int len)
+{
+    pci_default_write_config(dev, addr, val, len);
+    ATIVGAState *s = ATI_VGA(dev);
+    if (s->is_3d) {
+        warn_report("ati3d: PCI cfg write @0x%02x len=%d val=0x%x", addr, len, val);
+    }
+}
+
 static void ati_vga_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -1195,9 +1419,12 @@ static void ati_vga_class_init(ObjectClass *klass, const void *data)
     k->class_id = PCI_CLASS_DISPLAY_VGA;
     k->vendor_id = PCI_VENDOR_ID_ATI;
     k->device_id = PCI_DEVICE_ID_ATI_RAGE128_PF;
+    k->revision = 0x02; /* Rage 128 Pro PF silicon stepping */
     k->romfile = "vgabios-ati.bin";
     k->realize = ati_vga_realize;
     k->exit = ati_vga_exit;
+    k->config_read = ati_pci_config_read;
+    k->config_write = ati_pci_config_write;
 }
 
 static void ati_vga_init(Object *o)

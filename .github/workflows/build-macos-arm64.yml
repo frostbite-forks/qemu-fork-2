@@ -1,0 +1,88 @@
+name: Build QEMU macOS arm64
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install ninja meson glib pixman pkg-config libslirp
+
+      - name: Configure
+        run: |
+          ./configure \
+            --target-list=ppc-softmmu \
+            --enable-cocoa \
+            --disable-docs \
+            --disable-werror \
+            --prefix=$PWD/dist
+
+      - name: Build
+        run: ninja -C build -j$(sysctl -n hw.logicalcpu)
+
+      - name: Install
+        run: ninja -C build install
+
+      - name: Sign binary
+        run: |
+          cat > qemu-entitlements.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.cs.allow-jit</key>
+              <true/>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.cs.disable-library-validation</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          xattr -cr dist/bin/qemu-system-ppc
+          codesign -s - --entitlements qemu-entitlements.plist --force dist/bin/qemu-system-ppc
+
+      - name: Package artifact
+        run: |
+          mkdir -p pkg/bin pkg/share/qemu/ndrv
+          cp dist/bin/qemu-system-ppc pkg/bin/
+          cp -r dist/share/qemu/. pkg/share/qemu/
+          cp pc-bios/qemu_vga.ndrv pkg/share/qemu/ndrv/qemu_vga.ndrv
+          tar czf qemu-ppc-macos-arm64.tar.gz -C pkg .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-ppc-macos-arm64
+          path: qemu-ppc-macos-arm64.tar.gz
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: qemu-ppc-macos-arm64
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: qemu-ppc-macos-arm64.tar.gz
+          prerelease: false
