@@ -283,9 +283,9 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
     ATIVGAState *s = opaque;
     uint32_t val = 0;
 
-    if (s->is_3d) {
+    if (s->is_3d && !(addr >= 0x0500 && addr <= 0x051f)) {
         static unsigned mmio_log_count;
-        if (mmio_log_count < 30) {
+        if (mmio_log_count < 200) {
             warn_report("ati3d: MMIO read[%u] offset=0x%04x", mmio_log_count, (unsigned)addr);
             mmio_log_count++;
         }
@@ -654,9 +654,9 @@ static void ati_mm_write(void *opaque, hwaddr addr,
 {
     ATIVGAState *s = opaque;
 
-    if (s->is_3d) {
+    if (s->is_3d && !(addr >= 0x0500 && addr <= 0x051f)) {
         static unsigned mmio_wlog_count;
-        if (mmio_wlog_count < 30) {
+        if (mmio_wlog_count < 200) {
             warn_report("ati3d: MMIO write[%u] offset=0x%04x val=0x%x",
                         mmio_wlog_count, (unsigned)addr, (unsigned)data);
             mmio_wlog_count++;
