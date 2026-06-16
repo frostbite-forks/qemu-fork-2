@@ -82,6 +82,10 @@
 #define TBFREQ (25UL * 1000UL * 1000UL)
 #define CLOCKFREQ (900UL * 1000UL * 1000UL)
 #define BUSFREQ (100UL * 1000UL * 1000UL)
+#define PM33_TBFREQ (24999999UL)
+#define PM33_CLOCKFREQ (500UL * 1000UL * 1000UL)
+#define PM33_BUSFREQ (99999999UL)
+#define PPC_MODEL_POWERMAC33 0x33
 
 #define NDRV_VGA_FILENAME "qemu_vga.ndrv"
 
@@ -96,6 +100,10 @@
 typedef struct Core99MachineState Core99MachineState;
 DECLARE_INSTANCE_CHECKER(Core99MachineState, CORE99_MACHINE,
                          TYPE_CORE99_MACHINE)
+
+#define TYPE_POWERMAC3_3_MACHINE MACHINE_TYPE_NAME("powermac3_3")
+DECLARE_INSTANCE_CHECKER(Core99MachineState, POWERMAC3_3_MACHINE,
+                         TYPE_POWERMAC3_3_MACHINE)
 
 typedef enum {
     CORE99_VIA_CONFIG_CUDA = 0,
@@ -142,6 +150,12 @@ static void cpu_kick(void *opaque, int n, int level)
     }
 }
 
+static bool is_powermac33_machine(MachineState *machine)
+{
+    return object_dynamic_cast(OBJECT(machine),
+                               TYPE_POWERMAC3_3_MACHINE) != NULL;
+}
+
 /* PowerPC Mac99 hardware initialisation */
 static void ppc_core99_init(MachineState *machine)
 {
@@ -169,18 +183,22 @@ static void ppc_core99_init(MachineState *machine)
     DeviceState *dev, *pic_dev, *uninorth_pci_dev;
     DeviceState *uninorth_internal_dev = NULL, *uninorth_agp_dev = NULL;
     hwaddr nvram_addr = 0xFFF04000;
-    uint64_t tbfreq = kvm_enabled() ? kvmppc_get_tbfreq() : TBFREQ;
+    bool powermac33 = is_powermac33_machine(machine);
+    uint64_t tbfreq = powermac33 ? PM33_TBFREQ :
+        (kvm_enabled() ? kvmppc_get_tbfreq() : TBFREQ);
 
     /* init CPUs */
     cpus = g_new0(PowerPCCPU *, machine->smp.cpus);
     for (i = 0; i < machine->smp.cpus; i++) {
         cpus[i] = POWERPC_CPU(cpu_create(machine->cpu_type));
-fprintf(stderr, "cpus[%d] = %p %p\n", i, (void *)cpus[i], (void *)&cpus[i]->env);
         /* Secondary CPUs start halted */
         object_property_set_bool(OBJECT(cpus[i]), "start-powered-off", i != 0,
                                  &error_abort);
-        /* Set time-base frequency to 100 Mhz */
-        cpu_ppc_tb_init(&cpus[i]->env, TBFREQ);
+        if (powermac33) {
+            cpu_ppc_tb_init(&cpus[i]->env, PM33_TBFREQ);
+        } else {
+            cpu_ppc_tb_init(&cpus[i]->env, TBFREQ);
+        }
         qemu_register_reset(ppc_core99_reset, cpus[i]);
     }
     env = &cpus[0]->env;
@@ -471,7 +489,15 @@ fprintf(stderr, "cpus[%d] = %p %p\n", i, (void *)cpus[i], (void *)&cpus[i]->env)
         graphic_depth = 15;
     }
 
-    pci_init_nic_devices(pci_bus, mc->default_nic);
+    if (powermac33 && uninorth_internal_dev) {
+        PCIBus *internal_bus =
+            PCI_HOST_BRIDGE(uninorth_internal_dev)->bus;
+
+        pci_create_simple(internal_bus, PCI_DEVFN(0xf, 0),
+                          mc->default_nic);
+    } else {
+        pci_init_nic_devices(pci_bus, mc->default_nic);
+    }
 
     /* The NewWorld NVRAM is not located in the MacIO device */
     if (kvm_enabled() && qemu_real_host_page_size() > 4096) {
@@ -532,8 +558,12 @@ fprintf(stderr, "cpus[%d] = %p %p\n", i, (void *)cpus[i], (void *)&cpus[i]->env)
     }
     fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_TBFREQ, tbfreq);
     /* Mac OS X requires a "known good" clock-frequency value; pass it one. */
-    fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_CLOCKFREQ, CLOCKFREQ);
-    fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_BUSFREQ, BUSFREQ);
+    fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_CLOCKFREQ,
+                   powermac33 ? PM33_CLOCKFREQ : CLOCKFREQ);
+    fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_BUSFREQ,
+                   powermac33 ? PM33_BUSFREQ : BUSFREQ);
+    fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_MODEL,
+                   powermac33 ? PPC_MODEL_POWERMAC33 : 0);
     fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_NVRAM_ADDR, nvram_addr);
 
     /* MacOS NDRV VGA driver */
@@ -599,7 +629,7 @@ static void core99_machine_class_init(ObjectClass *oc, const void *data)
     mc->desc = "Mac99 based PowerMac";
     mc->init = ppc_core99_init;
     mc->block_default_type = IF_IDE;
-    /* SMP is not supported currently */
+    /* SMP is not supported on generic mac99 */
     mc->max_cpus = 2;
     mc->default_boot_order = "cd";
     mc->default_display = "std";
@@ -673,9 +703,40 @@ static const TypeInfo core99_machine_info = {
     },
 };
 
+static void powermac3_3_class_init(ObjectClass *oc, const void *data)
+{
+    MachineClass *mc = MACHINE_CLASS(oc);
+
+    core99_machine_class_init(oc, data);
+    mc->desc = "Apple Power Macintosh G4 500 DP (Gigabit)";
+    mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("7400_v2.9");
+    mc->max_cpus = 4;
+    mc->default_cpus = 2;
+    mc->default_machine_opts = "via=pmu";
+}
+
+static void powermac3_3_instance_init(Object *obj)
+{
+    core99_instance_init(obj);
+    CORE99_MACHINE(obj)->via_config = CORE99_VIA_CONFIG_PMU;
+}
+
+static const TypeInfo powermac3_3_machine_info = {
+    .name          = MACHINE_TYPE_NAME("powermac3_3"),
+    .parent        = TYPE_MACHINE,
+    .class_init    = powermac3_3_class_init,
+    .instance_init = powermac3_3_instance_init,
+    .instance_size = sizeof(Core99MachineState),
+    .interfaces = (const InterfaceInfo[]) {
+        { TYPE_FW_PATH_PROVIDER },
+        { }
+    },
+};
+
 static void mac_machine_register_types(void)
 {
     type_register_static(&core99_machine_info);
+    type_register_static(&powermac3_3_machine_info);
 }
 
 type_init(mac_machine_register_types)
