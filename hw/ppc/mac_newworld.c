@@ -97,14 +97,6 @@ typedef struct Core99MachineState Core99MachineState;
 DECLARE_INSTANCE_CHECKER(Core99MachineState, CORE99_MACHINE,
                          TYPE_CORE99_MACHINE)
 
-#define TYPE_POWERMAC33_MACHINE MACHINE_TYPE_NAME("powermac33")
-DECLARE_INSTANCE_CHECKER(Core99MachineState, POWERMAC33_MACHINE,
-                         TYPE_POWERMAC33_MACHINE)
-
-/* Clock frequencies for the G4 500 DP (Gigabit Ethernet) */
-#define P33_CLOCKFREQ (500UL * 1000UL * 1000UL)
-#define P33_BUSFREQ   (100UL * 1000UL * 1000UL)
-
 typedef enum {
     CORE99_VIA_CONFIG_CUDA = 0,
     CORE99_VIA_CONFIG_PMU,
@@ -333,9 +325,7 @@ fprintf(stderr, "cpus[%d] = %p %p\n", i, (void *)cpus[i], (void *)&cpus[i]->env)
         memory_region_add_subregion(get_system_memory(), 0xf2000000,
                                     sysbus_mmio_get_region(s, 3));
     } else {
-        machine_arch = object_dynamic_cast(OBJECT(machine),
-                                           TYPE_POWERMAC33_MACHINE)
-                       ? ARCH_MAC99_P33 : ARCH_MAC99;
+        machine_arch = ARCH_MAC99;
         /* Use values found on a real PowerMac */
         /* Uninorth AGP bus */
         uninorth_agp_dev = qdev_new(TYPE_UNI_NORTH_AGP_HOST_BRIDGE);
@@ -542,13 +532,8 @@ fprintf(stderr, "cpus[%d] = %p %p\n", i, (void *)cpus[i], (void *)&cpus[i]->env)
     }
     fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_TBFREQ, tbfreq);
     /* Mac OS X requires a "known good" clock-frequency value; pass it one. */
-    if (machine_arch == ARCH_MAC99_P33) {
-        fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_CLOCKFREQ, P33_CLOCKFREQ);
-        fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_BUSFREQ, P33_BUSFREQ);
-    } else {
-        fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_CLOCKFREQ, CLOCKFREQ);
-        fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_BUSFREQ, BUSFREQ);
-    }
+    fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_CLOCKFREQ, CLOCKFREQ);
+    fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_BUSFREQ, BUSFREQ);
     fw_cfg_add_i32(fw_cfg, FW_CFG_PPC_NVRAM_ADDR, nvram_addr);
 
     /* MacOS NDRV VGA driver */
@@ -688,55 +673,9 @@ static const TypeInfo core99_machine_info = {
     },
 };
 
-static void powermac33_machine_class_init(ObjectClass *oc, const void *data)
-{
-    MachineClass *mc = MACHINE_CLASS(oc);
-    FWPathProviderClass *fwc = FW_PATH_PROVIDER_CLASS(oc);
-
-    mc->desc = "Power Macintosh G4 500 DP (Gigabit Ethernet)";
-    mc->init = ppc_core99_init;
-    mc->block_default_type = IF_IDE;
-    mc->max_cpus = 2;
-    mc->default_cpus = 2;
-    mc->min_cpus = 1;
-    mc->default_boot_order = "cd";
-    mc->default_display = "std";
-    mc->default_nic = "sungem";
-    mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("7450_v2.1");
-    mc->default_ram_id = "ppc_core99.ram";
-    mc->ignore_boot_device_suffixes = true;
-    fwc->get_dev_path = core99_fw_dev_path;
-}
-
-static void powermac33_instance_init(Object *obj)
-{
-    Core99MachineState *cms = CORE99_MACHINE(obj);
-
-    /* G4 500 DP uses PMU with ADB for keyboard/mouse */
-    cms->via_config = CORE99_VIA_CONFIG_PMU_ADB;
-    object_property_add_str(obj, "via", core99_get_via_config,
-                            core99_set_via_config);
-    object_property_set_description(obj, "via",
-                                    "Set VIA configuration. "
-                                    "Valid values are cuda, pmu and pmu-adb");
-}
-
-static const TypeInfo powermac33_machine_info = {
-    .name          = TYPE_POWERMAC33_MACHINE,
-    .parent        = TYPE_MACHINE,
-    .class_init    = powermac33_machine_class_init,
-    .instance_init = powermac33_instance_init,
-    .instance_size = sizeof(Core99MachineState),
-    .interfaces = (const InterfaceInfo[]) {
-        { TYPE_FW_PATH_PROVIDER },
-        { }
-    },
-};
-
 static void mac_machine_register_types(void)
 {
     type_register_static(&core99_machine_info);
-    type_register_static(&powermac33_machine_info);
 }
 
 type_init(mac_machine_register_types)

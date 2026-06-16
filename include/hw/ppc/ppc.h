@@ -100,7 +100,6 @@ enum {
     ARCH_MAC99,
     ARCH_HEATHROW,
     ARCH_MAC99_U3,
-    ARCH_MAC99_P33,
 };
 
 #define FW_CFG_PPC_WIDTH        (FW_CFG_ARCH_LOCAL + 0x00)
