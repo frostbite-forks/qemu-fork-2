@@ -105,6 +105,11 @@ typedef struct ATIVGARegs {
     uint32_t pm4_buffer_dl_rptr;
     uint32_t pm4_buffer_dl_wptr;
     uint32_t pm4_micro_cntl;
+    /* Indirect PLL register file — accessed via CLOCK_CNTL_INDEX/DATA.
+     * ROM FCode writes PLL divisors here and polls for atomic-update
+     * completion; we need round-trip storage so the FCode doesn't hang. */
+    uint32_t clock_cntl_index;
+    uint32_t clock_cntl_data[64];
 } ATIVGARegs;
 
 typedef struct ATIHostDataState {

@@ -43,6 +43,19 @@ void ati_3d_init(ATIVGAState *s)
     s->regs.misc_3d_state_cntl      = 0;
 
     /*
+     * Seed PLL indirect registers with plausible reset values so the ROM
+     * FCode doesn't compute zero-MHz clocks and the NDRV doesn't divide
+     * by zero when reading ATY,RefCLK / ATY,MCLK / ATY,SCLK properties.
+     *
+     * PPLL_REF_DIV = 12: with a 28.636 MHz crystal → ~2.386 MHz base
+     * PPLL_DIV_0 feedback = 0x2D (45): ~107 MHz pixel clock at 1024×768
+     * MCLK_CNTL (index 8) = 0xA2: MCLK/SCLK enabled, no resets
+     */
+    s->regs.clock_cntl_data[PPLL_REF_DIV] = 12;
+    s->regs.clock_cntl_data[PPLL_DIV_0]   = 0x2D0000 | 12;
+    s->regs.clock_cntl_data[8]             = 0x000000a2; /* MCLK_CNTL */
+
+    /*
      * Seed CRTC registers with a valid 1280×1024×32 geometry so that any
      * hardware-detection code that reads them before OpenBIOS programs the
      * VBE mode (which triggers the full sync in ati_mm_write) does not see
