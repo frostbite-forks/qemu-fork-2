@@ -74,7 +74,6 @@
 #include "kvm_ppc.h"
 #include "hw/usb/usb.h"
 #include "hw/core/sysbus.h"
-#include "hw/core/irq.h"
 #include "trace.h"
 
 #define MAX_IDE_BUS 2
@@ -130,25 +129,12 @@ static void ppc_core99_reset(void *opaque)
     cpu->env.nip = PROM_BASE + 0x100;
 }
 
-static void cpu_kick(void *opaque, int n, int level)
-{
-    PowerPCCPU *cpu = opaque;
-    CPUState *cs = CPU(cpu);
-
-    if (level) {
-        cpu->env.excp_prefix = 0;
-        cpu_reset(cs);
-        ppc_cpu_do_system_reset(cs);
-    }
-}
-
 /* PowerPC Mac99 hardware initialisation */
 static void ppc_core99_init(MachineState *machine)
 {
     Core99MachineState *core99_machine = CORE99_MACHINE(machine);
     MachineClass *mc = MACHINE_GET_CLASS(machine);
-    qemu_irq kick;
-    PowerPCCPU **cpus = NULL;
+    PowerPCCPU *cpu = NULL;
     CPUPPCState *env = NULL;
     char *filename;
     IrqLines *openpic_irqs;
@@ -172,18 +158,14 @@ static void ppc_core99_init(MachineState *machine)
     uint64_t tbfreq = kvm_enabled() ? kvmppc_get_tbfreq() : TBFREQ;
 
     /* init CPUs */
-    cpus = g_new0(PowerPCCPU *, machine->smp.cpus);
     for (i = 0; i < machine->smp.cpus; i++) {
-        cpus[i] = POWERPC_CPU(cpu_create(machine->cpu_type));
-fprintf(stderr, "cpus[%d] = %p %p\n", i, (void *)cpus[i], (void *)&cpus[i]->env);
-        /* Secondary CPUs start halted */
-        object_property_set_bool(OBJECT(cpus[i]), "start-powered-off", i != 0,
-                                 &error_abort);
+        cpu = POWERPC_CPU(cpu_create(machine->cpu_type));
+        env = &cpu->env;
+
         /* Set time-base frequency to 100 Mhz */
-        cpu_ppc_tb_init(&cpus[i]->env, TBFREQ);
-        qemu_register_reset(ppc_core99_reset, cpus[i]);
+        cpu_ppc_tb_init(env, TBFREQ);
+        qemu_register_reset(ppc_core99_reset, cpu);
     }
-    env = &cpus[0]->env;
 
     /* allocate RAM */
     if (machine->ram_size > 2 * GiB) {
@@ -263,8 +245,8 @@ fprintf(stderr, "cpus[%d] = %p %p\n", i, (void *)cpus[i], (void *)&cpus[i]->env)
     }
 
     openpic_irqs = g_new0(IrqLines, machine->smp.cpus);
+    dev = DEVICE(cpu);
     for (i = 0; i < machine->smp.cpus; i++) {
-        dev = DEVICE(cpus[i]);
         /* Mac99 IRQ connection between OpenPIC outputs pins
          * and PowerPC input pins
          */
@@ -376,17 +358,9 @@ fprintf(stderr, "cpus[%d] = %p %p\n", i, (void *)cpus[i], (void *)&cpus[i]->env)
     qdev_prop_set_chr(dev, "chrA", serial_hd(0));
     qdev_prop_set_chr(dev, "chrB", serial_hd(1));
 
-    pic_dev = DEVICE(object_resolve_path_component(macio, "pic"));
-    qdev_prop_set_uint32(pic_dev, "nb_cpus", machine->smp.cpus);
-
     pci_realize_and_unref(PCI_DEVICE(macio), pci_bus, &error_fatal);
 
-    s = SYS_BUS_DEVICE(object_resolve_path_component(macio, "gpio"));
-    for (i = 1; i < machine->smp.cpus; i++) {
-        kick = qemu_allocate_irq(cpu_kick, cpus[i], i);
-        sysbus_connect_irq(s, 4, kick);
-    }
-
+    pic_dev = DEVICE(object_resolve_path_component(macio, "pic"));
     for (i = 0; i < 4; i++) {
         qdev_connect_gpio_out(uninorth_pci_dev, i,
                               qdev_get_gpio_in(pic_dev, 0x1b + i));
@@ -600,7 +574,7 @@ static void core99_machine_class_init(ObjectClass *oc, const void *data)
     mc->init = ppc_core99_init;
     mc->block_default_type = IF_IDE;
     /* SMP is not supported currently */
-    mc->max_cpus = 2;
+    mc->max_cpus = 1;
     mc->default_boot_order = "cd";
     mc->default_display = "std";
     mc->default_nic = "sungem";
