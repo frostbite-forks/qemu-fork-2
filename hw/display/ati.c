@@ -654,6 +654,15 @@ static void ati_mm_write(void *opaque, hwaddr addr,
 {
     ATIVGAState *s = opaque;
 
+    if (s->is_3d) {
+        static unsigned mmio_wlog_count;
+        if (mmio_wlog_count < 30) {
+            warn_report("ati3d: MMIO write[%u] offset=0x%04x val=0x%x",
+                        mmio_wlog_count, (unsigned)addr, (unsigned)data);
+            mmio_wlog_count++;
+        }
+    }
+
     if (addr < CUR_OFFSET || addr > CUR_CLR1 || ATI_DEBUG_HW_CURSOR) {
         trace_ati_mm_write(size, addr, ati_reg_name(addr & ~3ULL), data);
     }
