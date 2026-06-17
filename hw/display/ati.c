@@ -26,6 +26,7 @@
 #include "qemu/log.h"
 #include "qemu/module.h"
 #include "qemu/error-report.h"
+#include "qemu/datadir.h"
 #include "qapi/error.h"
 #include "ui/console.h"
 #include "trace.h"
@@ -292,6 +293,14 @@ static uint64_t ati_mm_read(void *opaque, hwaddr addr, unsigned int size)
     }
 
     switch (addr) {
+    case CLOCK_CNTL_INDEX:
+        val = s->regs.clock_cntl_index;
+        break;
+    case CLOCK_CNTL_DATA: {
+        unsigned idx = s->regs.clock_cntl_index & 0x3f;
+        val = s->regs.clock_cntl_data[idx];
+        break;
+    }
     case MM_INDEX:
         val = s->regs.mm_index;
         break;
@@ -667,6 +676,21 @@ static void ati_mm_write(void *opaque, hwaddr addr,
         trace_ati_mm_write(size, addr, ati_reg_name(addr & ~3ULL), data);
     }
     switch (addr) {
+    case CLOCK_CNTL_INDEX:
+        s->regs.clock_cntl_index = data;
+        break;
+    case CLOCK_CNTL_DATA: {
+        unsigned idx = s->regs.clock_cntl_index & 0x3f;
+        s->regs.clock_cntl_data[idx] = data;
+        /*
+         * Clear the PPLL atomic-update bit immediately so ROM FCode doesn't
+         * spin waiting for PLL lock that never happens in emulation.
+         */
+        if (idx == PPLL_CNTL || (idx >= PPLL_DIV_0 && idx <= PPLL_DIV_3)) {
+            s->regs.clock_cntl_data[idx] &= ~PPLL_ATOMIC_UPDATE_W;
+        }
+        break;
+    }
     case MM_INDEX:
         s->regs.mm_index = data & ~3;
         break;
@@ -1347,6 +1371,39 @@ static void ati_vga_realize(PCIDevice *dev, Error **errp)
     /* most interrupts are not yet emulated but MacOS needs at least VBlank */
     dev->config[PCI_INTERRUPT_PIN] = 1;
     timer_init_ns(&s->vblank_timer, QEMU_CLOCK_VIRTUAL, ati_vga_vblank_irq, s);
+
+    /*
+     * Auto-load the real ATI Rage 128 Pro option ROM when 3D mode is active.
+     * OpenBIOS vga_config_cb will detect the OF FCode inside the ROM (0xF108
+     * marker) and execute it instead of the generic vga-driver-fcode stub.
+     * The ROM FCode creates all ATY,* OF properties (RefCLK, MCLK, SCLK,
+     * Flags, …) that the real ATI NDRV reads via RegistryPropertyGet before
+     * touching any MMIO, and installs the NDRV from the embedded PEF.
+     * pci_add_option_rom() is called by QEMU after ati_realize() returns, so
+     * setting romfile here is sufficient.
+     */
+    /*
+     * When 3D mode is active, try to load the ATI Rage 128 Pro option ROM.
+     * The ROM is proprietary firmware that cannot be distributed; users must
+     * place rage128pro.rom in share/qemu/ themselves.  If found, OpenBIOS
+     * vga_config_cb will execute its OF FCode which creates all ATY,* device-
+     * tree properties (RefCLK, MCLK, SCLK, Flags, …) and installs the real
+     * NDRV — allowing the ATI 3D Accelerator extension to proceed past the
+     * DoDriverIO handshake and register a RAVE hardware engine.
+     * If the ROM is not present, vga_config_cb falls back to vga-driver-fcode
+     * (VBE-only display, no 3D).
+     */
+    if (s->is_3d && !dev->romfile) {
+        char *rom_path = qemu_find_file(QEMU_FILE_TYPE_BIOS, "rage128pro.rom");
+        if (rom_path) {
+            dev->romfile = g_strdup("rage128pro.rom");
+            g_free(rom_path);
+        } else {
+            warn_report("ati3d: rage128pro.rom not found in data dir — "
+                        "place it in share/qemu/ to enable ATY property "
+                        "setup and RAVE hardware 3D");
+        }
+    }
 }
 
 static void ati_vga_reset(DeviceState *dev)
